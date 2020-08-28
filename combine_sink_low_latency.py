@@ -1,12 +1,6 @@
-import json, os
+import json, os, sys
 import pulsectl
 
-# TODO: Write combine method
-# Put more code into main or some setup file. 
-# Allow for conditions where some specified devices are not available
-# Make sure latency is configured properly
-# Play with channel maps to put speakers in correct position to sound best
-# Try with and without hdmi audio
 FALLBACK_NULL_SINK_NAME = "FALLBACK_NULL_DEVICE_TEMP_2049"
 DEFAULT_DEVICES = {
     "bluetooth_speakers": "bluez...",
@@ -69,7 +63,6 @@ def main():
     
     combined_audio = combine(desired_devices, pulse_initial=pulse,
                              adjust_time=1, **combined_properties)
-    # print(combined_audio)
     
     for sink in pulse.sink_list():
         if sink.owner_module == combined_audio:
@@ -173,3 +166,6 @@ def combine(sources, pulse_initial=None, adjust_time=10, **kwargs):
 
 if __name__ == "__main__":
     main()
+    if sys.argv[-1] == "-listen":
+        #TODO: Add event listener that calls main() everytime list of sinks changes
+        pass
