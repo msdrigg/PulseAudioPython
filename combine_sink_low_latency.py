@@ -168,4 +168,5 @@ if __name__ == "__main__":
     main()
     if sys.argv[-1] == "-listen":
         #TODO: Add event listener that calls main() everytime list of sinks changes
+        #TODO: Possibly create a new systemctl service running puthon in the background to call function every eventloop (do I need to reregister the callback every time it is called, or can I let it sit?)
         pass
