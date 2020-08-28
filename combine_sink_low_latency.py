@@ -1,3 +1,4 @@
+import json, os
 import pulsectl
 
 # TODO: Write combine method
@@ -6,7 +7,7 @@ import pulsectl
 # Make sure latency is configured properly
 # Play with channel maps to put speakers in correct position to sound best
 # Try with and without hdmi audio
-
+FALLBACK_NULL_SINK_NAME = "FALLBACK_NULL_DEVICE_TEMP_2049"
 DEFAULT_DEVICES = {
     "bluetooth_speakers": "bluez...",
     "external_speakers": "alas.generic_usb...",
@@ -16,116 +17,159 @@ DEFAULT_DEVICES = {
 
 def main():
     # Combines speakers together, remapping bluetooth, sets this as default
-    devices = DEFAULT_DEVICES
+    with open(os.path.join(os.getcwd(), "sources.json")) as f:
+        devices = json.load(f)
     
     pulse = pulsectl.Pulse()
-    sources = pulse.source_list()
     
     remapped_properties = {
         "sink_properties": "device.description=RemappedLogiSpeakers",
         "sink_name": "RemappedLogiSpeakers",
     }
+
     bluetooth_channel_map = {
-        # Dict of input_channel: output_channel
+        "front-left": "front-right",
+        "front-right": "front-left",
     }
     
     combined_properties = {
         "sink_properties": "device.description=CombinedSpeakers",
         "sink_name": "CombinedSpeakers",
     }
+
+    device_names = [value["name"] for value in devices.values() if value.get("suspended", "no") != "yes"]
+    desired_devices = [sink for sink in pulse.sink_list() if sink.name in device_names]
     
-    remapped_bluetooth = remap(devices["bluetooth_speakers"], channel_map
-                               module_properties=remapped_properties)
+    bluetooth_speakers = devices["bluetooth_desk"]
+    for device in desired_devices:
+        if device.name == bluetooth_speakers["name"]:
+            fallback_sink = None
+            for device in desired_devices:
+                if device.name != bluetooth_speakers["name"]:
+                    fallback_sink = device
+            if fallback_sink is None:
+                fallback_sink = create_and_return_null(pulse_initial=pulse)
+            pulse.default_set(fallback_sink)
+            remapped_bluetooth_module_id = remap(device, bluetooth_channel_map,
+                                                 pulse_initial=pulse,
+                                                 **remapped_properties)
+            success = False
+            desired_devices.remove(device)
+            for item in pulse.sink_list():
+                if item.owner_module == remapped_bluetooth_module_id:
+                    desired_devices.append(item)
+                    success = True
+                    break
+            if not success:
+                print("Failure finding remapped sink")
+            
+            if fallback_sink.name == FALLBACK_NULL_SINK_NAME:
+                pulse.module_unload(fallback_sink.index)
+            break
     
-    combined_sources = list(map(lambda a: a.name, source_list
-    for i in [
-        remapped_bluetooth.name, 
-        main_monitor_hdmi.name, 
-        external_speakers.name
-    ]
+    combined_audio = combine(desired_devices, pulse_initial=pulse,
+                             adjust_time=1, **combined_properties)
+    # print(combined_audio)
     
-    combined_audio = combine(combined_sources, pulse_initial=pulse, 
-                             module_properties=combined_properties)
+    for sink in pulse.sink_list():
+        if sink.owner_module == combined_audio:
+            print("SETTING DEFAULT")
+            pulse.default_set(sink)
 
 
-def remap(source_name, pulse_initial=None, **kwargs):
-    # source_name contains name identifiers for sound source 
-    # sink_name contains name identifiers for sound sink 
+def create_and_return_null(pulse_initial=None):
+    # Creates and returns a null sink with name "FALLBACK_NULL_SINK_NAME"
+    print("CREATING NULL")
+    if pulse_initial is None:
+        pulse = pulsectl.Pulse()
+    else:
+        pulse = pulse_initial
+    
+    null_id = pulse.load_module('module-null-sink', f'sink_name="{FALLBACK_NULL_SINK_NAME}"')
+    
+    if null_id > 100000:
+        print("Invalid remap id " + str(remap_id))
+        return
+    
+    for device in pulse.sink_list():
+        if device.owner_module == null_id:
+            return device
+
+    print("Null sink not found")
+
+
+def remap(source, channel_map, pulse_initial=None, **kwargs):
+    # source_json contains name identifiers for sound source 
     # kwargs: passed to load-module
-    # Returns: true if successful, false if not
+    # Returns: remapped_module_id if successful, None if not successful
+    print("REMAPPING")
     if pulse_initial is None:
         pulse = pulsectl.Pulse()
     else:
         pulse = pulse_initial
     
-    loop_id = pulse.module_load('module-loopback', **kwargs)
+    output_channels = ",".join(channel_map.values())
+    input_channels = ",".join(channel_map.keys())
+    
+    kwarg_string = " ".join(list(map(lambda kvp: f'{kvp[0]}="{kvp[1]}"', kwargs.items())))
+    if kwarg_string != "":
+        kwarg_string = " " + kwarg_string
+    #print(f'master="{source.name}" channels={str(len(channel_map))} ' + 
+    #    f'channel_map="{output_channels}" master_channel_map="{input_channels}" ' +
+    #    'remix="no"' + kwarg_string
+    #)
+
+    remap_id = pulse.module_load('module-remap-sink', 
+        f'master="{source.name}" channels={str(len(channel_map))} ' + 
+        f'channel_map="{output_channels}" master_channel_map="{input_channels}" ' +
+        'remix="no"' + kwarg_string
+    )
     
     
-    if loop_id > 100000:
-        print("Invalid loop id")
+    if remap_id > 100000:
+        print("Invalid remap id " + str(remap_id))
         return
     
-      # Find the newly created sink-input
-    loop_sink_input = None
-    for si in pulse.sink_input_list():
-        if si.owner_module == loop_id:
-            print("Sink-input: %s" % si.index)
-            loop_sink_input = si
+    return remap_id
 
-    if loop_sink_input == None:
-        print("Could not find newly created sink-input")
-        return
-   
-  # Find the newly created source-output
-    loop_source_output = None
-    for so in pulse.source_output_list():
-        if so.owner_module == loop_id:
-            print("Source-output: %s" % so.index)
-            loop_source_output = so
 
-    if loop_source_output == None:
-        print("Could not find newly created source-output")
-        return
-
-def loopback(source_name, sink_name, latency_msec=1, pulse_initial=None):
-    # TODO: FIGURE OUT IF PULSEAUDIO KNOWS IF LATENCY IS IN ADDITION TO EXTERNAL SPEAKERS, OR
-    #   IF I SHOULD COPY LATENCY FROM EXTERNAL SPEAKERS BEFORE LOOPBACK
-    # source_name contains name identifiers for sound source 
+def combine(sources, pulse_initial=None, adjust_time=10, **kwargs):
     # sink_name contains name identifiers for sound sink 
-    # latency_msec contains desired loopback latency
-    # pulse_initial: instance of pulsectl.Pulse() so that it is not recreated if unnecessary
-    # Returns: true if successful, false if not
+    # sources contain dict objects with information about sources to be combined
+    # kwargs: passed to load-module
+    # Returns: remapped_module_id if successful, None if not successful
+    print("COMBINING")
     if pulse_initial is None:
         pulse = pulsectl.Pulse()
     else:
         pulse = pulse_initial
     
-    loop_id = pulse.module_load('module-loopback', 'source="{0}" sink="{1}" latency_msec={2}'
-        .format(source_name, sink_name, latency_msec))
-    
-    
-    if loop_id > 100000:
-        print("Invalid loop id")
-        return
-    
-      # Find the newly created sink-input
-    loop_sink_input = None
-    for si in pulse.sink_input_list():
-        if si.owner_module == loop_id:
-            print("Sink-input: %s" % si.index)
-            loop_sink_input = si
+    source_names = ",".join(list(map(lambda a: a.name, sources)))
+    channel_map_set = set()
+    for source in sources:
+        channel_map_set.update(source.channel_list)
+    channel_map = ",".join(sorted(channel_map_set))
+    channel_count = len(channel_map_set)
 
-    if loop_sink_input == None:
-        print("Could not find newly created sink-input")
-        return
-   
-  # Find the newly created source-output
-    loop_source_output = None
-    for so in pulse.source_output_list():
-        if so.owner_module == loop_id:
-            print("Source-output: %s" % so.index)
-            loop_source_output = so
+    kwarg_string = " ".join(list(map(lambda kvp: f'{kvp[0]}="{kvp[1]}"', kwargs.items())))
+    if kwarg_string != "":
+        kwarg_string = " " + kwarg_string
+    #print(f'slaves="{source_names}" channels="{channel_count}" ' + 
+    #    f'channel_map="{channel_map}" adjust_time="{adjust_time}"' + 
+    #    kwarg_string
+    #)
 
-    if loop_source_output == None:
-        print("Could not find newly created source-output")
+    combine_id = pulse.module_load('module-combine-sink', 
+        f'slaves="{source_names}" channels="{channel_count}" ' + 
+        f'channel_map="{channel_map}" adjust_time="{adjust_time}"' + 
+        kwarg_string
+    )
+    if combine_id > 100000:
+        print("Invalid combine id " + str(combine_id))
         return
+    
+    return combine_id
+
+
+if __name__ == "__main__":
+    main()
