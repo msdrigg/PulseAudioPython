@@ -2,6 +2,7 @@ import json, os, sys
 import pulsectl
 
 FALLBACK_NULL_SINK_NAME = "FALLBACK_NULL_DEVICE_TEMP_2049"
+UNIQUE_MODULE_PROPERTY = "MODULE_PROPERTY_02349823"
 DEFAULT_DEVICES = {
     "bluetooth_speakers": "bluez...",
     "external_speakers": "alas.generic_usb...",
@@ -9,7 +10,7 @@ DEFAULT_DEVICES = {
     "sport": "weird_sport_bluetooth...",
 }
 
-def main():
+def activate():
     # Combines speakers together, remapping bluetooth, sets this as default
     with open(os.path.join(os.getcwd(), "sources.json")) as f:
         devices = json.load(f)
@@ -17,7 +18,7 @@ def main():
     pulse = pulsectl.Pulse()
     
     remapped_properties = {
-        "sink_properties": "device.description=RemappedLogiSpeakers",
+        "sink_properties": "device.description=RemappedLogiSpeakers" + " module.identifier="+ UNIQUE_MODULE_PROPERTY,
         "sink_name": "RemappedLogiSpeakers",
     }
 
@@ -27,23 +28,24 @@ def main():
     }
     
     combined_properties = {
-        "sink_properties": "device.description=CombinedSpeakers",
+        "sink_properties": "device.description=CombinedSpeakers" + " module.identifier="+ UNIQUE_MODULE_PROPERTY,
         "sink_name": "CombinedSpeakers",
     }
-
+    fallback_sink = create_and_return_null(pulse_initial=pulse)
+    pulse.default_set(fallback_sink)
     device_names = [value["name"] for value in devices.values() if value.get("suspended", "no") != "yes"]
-    desired_devices = [sink for sink in pulse.sink_list() if sink.name in device_names]
-    
+
+    def check_devices(sink_name, device_names_internal):
+        for name in device_names_internal:
+            if name in sink_name:
+                return True
+        return False
+
+    desired_devices = [sink for sink in pulse.sink_list() if check_devices(sink.name, device_names)]
+    # input("\nEnter to continue: ")
     bluetooth_speakers = devices["bluetooth_desk"]
     for device in desired_devices:
         if device.name == bluetooth_speakers["name"]:
-            fallback_sink = None
-            for device in desired_devices:
-                if device.name != bluetooth_speakers["name"]:
-                    fallback_sink = device
-            if fallback_sink is None:
-                fallback_sink = create_and_return_null(pulse_initial=pulse)
-            pulse.default_set(fallback_sink)
             remapped_bluetooth_module_id = remap(device, bluetooth_channel_map,
                                                  pulse_initial=pulse,
                                                  **remapped_properties)
@@ -56,11 +58,7 @@ def main():
                     break
             if not success:
                 print("Failure finding remapped sink")
-            
-            if fallback_sink.name == FALLBACK_NULL_SINK_NAME:
-                pulse.module_unload(fallback_sink.index)
-            break
-    
+    # input("\nEnter to continue: ")
     combined_audio = combine(desired_devices, pulse_initial=pulse,
                              adjust_time=1, **combined_properties)
     
@@ -69,6 +67,34 @@ def main():
             print("SETTING DEFAULT")
             pulse.default_set(sink)
 
+    pulse.module_unload(fallback_sink.owner_module)
+
+
+def deactivate(pulse_initial=None):
+    # Creates and returns a null sink with name "FALLBACK_NULL_SINK_NAME"
+    print("DEACTIVATING CHANGES")
+    if pulse_initial is None:
+        pulse = pulsectl.Pulse()
+    else:
+        pulse = pulse_initial
+
+    modules = pulse.module_list()
+    for module in modules:
+        if module.argument is not None and UNIQUE_MODULE_PROPERTY in module.argument:
+            # print("Unloading module: " + str(module.argument))
+            try:
+                pulse.module_unload(module.index)
+            except Exception as e:
+                print("Error: " + str(e))
+    #try:
+    #    pulse.module_unload("module-remap-sink", index_arg=False)
+    #except TypeError as e:
+    #    print("Type error: " + str(e))
+
+    #try:
+    #    pulse.module_unload("module-combine-sink", index_arg=False)
+    #except TypeError as e:
+    #    print("Type error: " + str(e))
 
 def create_and_return_null(pulse_initial=None):
     # Creates and returns a null sink with name "FALLBACK_NULL_SINK_NAME"
@@ -78,7 +104,7 @@ def create_and_return_null(pulse_initial=None):
     else:
         pulse = pulse_initial
     
-    null_id = pulse.load_module('module-null-sink', f'sink_name="{FALLBACK_NULL_SINK_NAME}"')
+    null_id = pulse.module_load('module-null-sink', f'sink_name="{FALLBACK_NULL_SINK_NAME}"')
     
     if null_id > 100000:
         print("Invalid remap id " + str(remap_id))
@@ -147,10 +173,10 @@ def combine(sources, pulse_initial=None, adjust_time=10, **kwargs):
     kwarg_string = " ".join(list(map(lambda kvp: f'{kvp[0]}="{kvp[1]}"', kwargs.items())))
     if kwarg_string != "":
         kwarg_string = " " + kwarg_string
-    #print(f'slaves="{source_names}" channels="{channel_count}" ' + 
-    #    f'channel_map="{channel_map}" adjust_time="{adjust_time}"' + 
-    #    kwarg_string
-    #)
+    # print(f'slaves="{source_names}" channels="{channel_count}" ' + 
+    #      f'channel_map="{channel_map}" adjust_time="{adjust_time}"' + 
+    #     kwarg_string
+    # )
 
     combine_id = pulse.module_load('module-combine-sink', 
         f'slaves="{source_names}" channels="{channel_count}" ' + 
@@ -165,8 +191,5 @@ def combine(sources, pulse_initial=None, adjust_time=10, **kwargs):
 
 
 if __name__ == "__main__":
-    main()
-    if sys.argv[-1] == "-listen":
-        #TODO: Add event listener that calls main() everytime list of sinks changes
-        #TODO: Possibly create a new systemctl service running puthon in the background to call function every eventloop (do I need to reregister the callback every time it is called, or can I let it sit?)
-        pass
+    deactivate()
+    activate()

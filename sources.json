@@ -1,0 +1,20 @@
+{
+    "bluetooth_desk": {
+        "name": "bluez_sink.EC_81_93_5A_66_BB.a2dp_sink",
+        "description": "Logi706",
+        "suspended": "yes"
+    },
+    "hdmi_monitor": {
+        "name": "alsa_output.pci-0000_21_00.1.hdmi-stereo",
+        "description": "HdmiMonitor"
+    },
+    "analog_desk": {
+        "name": "alsa_output.usb-Generic_USB_Audio-00",
+        "description": "AnalogSpeakers"
+    },
+    "bluetooth_portable": {
+        "suspended": "yes",
+        "name": "bluez_sink.12_75_58_95_AE_B4.a2dp_sink",
+        "description": "PortableSpeaker"
+    }
+}
