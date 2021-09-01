@@ -2,7 +2,7 @@
     "bluetooth_desk": {
         "name": "bluez_sink.EC_81_93_5A_66_BB.a2dp_sink",
         "description": "Logi706",
-        "suspended": "yes"
+        "suspended": "no"
     },
     "hdmi_monitor": {
         "name": "alsa_output.pci-0000_21_00.1.hdmi-stereo",
